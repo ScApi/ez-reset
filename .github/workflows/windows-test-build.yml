@@ -1,0 +1,28 @@
+name: Windows test build
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/wic-usb-gui-maintenance
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pyinstaller
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Build EXE
+        run: python -m PyInstaller --clean --noconfirm ez-reset.spec
+      - name: Upload test EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: EZ-Reset-Windows-test
+          path: dist/ez-reset.exe
+          if-no-files-found: error
