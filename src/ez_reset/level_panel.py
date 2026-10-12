@@ -5,7 +5,9 @@ An unavailable value is never interpreted as zero.
 """
 from __future__ import annotations
 
+import re
 import tkinter as tk
+from dataclasses import dataclass
 from tkinter import ttk
 
 INK_COLORS = {
@@ -25,6 +27,59 @@ INK_COLORS = {
     "ORANGE": ("Pomarańczowy", "#db781d"),
 }
 
+
+
+# Epson L3150 / EcoTank: no reliable ink percentages in the reported status
+# when EPSON Status Monitor instructs users to check the physical reservoirs.
+# Extend only with verified models; a missing percentage must not become 0%.
+MANUAL_TANK_MODELS = frozenset({"L3150"})
+BASIC_INKS = ("BLACK", "CYAN", "MAGENTA", "YELLOW")
+
+
+@dataclass(frozen=True)
+class InkCard:
+    """Data to display for one cartridge or tank, independent of Tk."""
+    name: str
+    percent: float | None
+    amount: str
+    color: str
+    manual: bool = False
+
+
+def requires_manual_tank_check(model: str) -> bool:
+    """Match the actual model token (e.g. 'EPSON L3150 Series'), not L31500."""
+    return any(re.search(rf"(?<![A-Z0-9]){re.escape(token)}(?![A-Z0-9])",
+                         model or "", re.IGNORECASE) for token in MANUAL_TANK_MODELS)
+
+
+def build_ink_cards(model: str, status: object | None) -> list[InkCard]:
+    """Preserve reported values and mark unavailable EcoTank levels as manual.
+
+    Called only for successfully parsed status responses. If status could not be
+    fetched, return no cards so the caller can display a communication error.
+    """
+    if status is None:
+        return []
+    reported: list[InkCard] = []
+    for ink in getattr(status, "levels", None) or ():
+        name = getattr(getattr(ink, "color", None), "name", "UNKNOWN")
+        _, color = INK_COLORS.get(name, (name, "#73818f"))
+        percent, amount = ink_reading(getattr(ink, "level", None))
+        reported.append(InkCard(name, percent, amount, color))
+
+    if not requires_manual_tank_check(model):
+        return reported
+
+    result: list[InkCard] = []
+    for name in BASIC_INKS:
+        current = next((card for card in reported if card.name == name), None)
+        if current is not None and current.percent is not None:
+            result.append(current)
+        else:
+            result.append(InkCard(name, None, "Sprawdź w zbiorniku",
+                                  INK_COLORS[name][1], manual=True))
+    result.extend(card for card in reported if card.name not in BASIC_INKS)
+    return result
 
 def ink_reading(level: object) -> tuple[float | None, str]:
     """Return percentage and label; out-of-range readings are unknown."""
@@ -72,6 +127,22 @@ class _Meter(ttk.LabelFrame):
             if progress > 0:
                 self.bar.create_rectangle(0, 0, round(width * progress / 100), height,
                                           fill=self.color, outline="")
+
+
+
+class _ManualTank(ttk.LabelFrame):
+    """Colored swatch, never a filled meter that implies measured percentage."""
+
+    def __init__(self, parent, title: str, color: str):
+        super().__init__(parent, text=title, padding=(12, 12))
+        row = ttk.Frame(self)
+        row.pack(fill="x")
+        swatch = tk.Canvas(row, width=29, height=34, highlightthickness=0, bd=0)
+        swatch.pack(side="left", padx=(0, 12))
+        swatch.create_rectangle(4, 2, 25, 31, fill=color, outline="#727b84", width=1)
+        ttk.Label(row, text="Sprawdź w zbiorniku",
+                  foreground="#8a5220", font=("Segoe UI", 10, "bold")).pack(
+                      side="left", fill="x")
 
 
 class StatusLevelsPanel(ttk.Frame):
@@ -145,23 +216,38 @@ class StatusLevelsPanel(ttk.Frame):
         inks_group.columnconfigure(0, weight=1)
         inks_group.columnconfigure(1, weight=1)
         row += 1
-        levels = list(getattr(status, "levels", None) or []) if status is not None else []
-        if levels:
-            for idx, ink in enumerate(levels):
-                name = getattr(getattr(ink, "color", None), "name", "UNKNOWN")
-                title, shade = INK_COLORS.get(name, (name.replace("_", " ").title(), "#73818f"))
-                pct, amount = ink_reading(getattr(ink, "level", None))
-                card = _Meter(inks_group, title, pct, amount, shade)
+        # Display a communication error instead of hypothetical tank readings.
+        cards = build_ink_cards(model, status) if not status_error else []
+        if cards:
+            for idx, ink in enumerate(cards):
+                title, shade = INK_COLORS.get(
+                    ink.name, (ink.name.replace("_", " ").title(), ink.color))
+                if ink.manual:
+                    card = _ManualTank(inks_group, title, shade)
+                else:
+                    card = _Meter(inks_group, title, ink.percent, ink.amount, shade)
                 card.grid(row=idx // 2, column=idx % 2, sticky="ew", padx=4, pady=5)
-            foot_row = (len(levels) + 1) // 2
+            foot_row = (len(cards) + 1) // 2
         else:
-            ttk.Label(inks_group, text="Błąd odczytu tuszu: " + status_error if status_error else
-                      "Drukarka nie udostępniła poziomów tuszu.", wraplength=620).grid(
-                          row=0, column=0, columnspan=2, sticky="w")
+            if status_error:
+                message = "Błąd odczytu tuszu: " + status_error
+            elif status is None:
+                message = "Nie udało się uzyskać stanu drukarki."
+            else:
+                message = "Drukarka nie udostępniła poziomów tuszu."
+            ttk.Label(inks_group, text=message, wraplength=620).grid(
+                row=0, column=0, columnspan=2, sticky="w")
             foot_row = 1
-        ttk.Label(inks_group, text="Poziomy raportowane przez drukarkę (mogą być szacunkowe).",
-                  foreground="#6b7075").grid(row=foot_row, column=0, columnspan=2,
-                                                sticky="w", pady=(11, 0))
+
+        manual_cards = any(card.manual for card in cards)
+        if manual_cards:
+            note = ("W tym modelu brak wiarygodnego odczytu wybranych zbiorników. "
+                    "Sprawdź ich poziomy wzrokowo; program nie szacuje procentów.")
+        else:
+            note = "Poziomy raportowane przez drukarkę (mogą być szacunkowe)."
+        ttk.Label(inks_group, text=note, wraplength=620,
+                  foreground="#6b7075").grid(
+                      row=foot_row, column=0, columnspan=2, sticky="w", pady=(11, 0))
 
         if status is not None:
             state = getattr(getattr(status, "state", None), "name", "?")
