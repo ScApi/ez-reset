@@ -11,12 +11,12 @@ from tkinter import messagebox, ttk
 
 from ez_reset.d4 import D4ControlBackend
 from ez_reset.devices import Device, by_model
+from ez_reset.level_panel import StatusLevelsPanel
 from ez_reset.maintenance import (
     get_print_queues, open_printer_preferences, print_test_page,
     print_raw_nozzle_check, recommend_queue,
 )
 from ez_reset.printer import Printer
-from ez_reset.wic_catalog import candidate_info
 from ez_reset.utils import parse_identifier
 from ez_reset.win_usbprint import USBPRINTTransport, enumerate_printers
 
@@ -152,8 +152,8 @@ class EzResetApp(ttk.Frame):
         bar.grid(row=0, column=0, sticky="ew")
         ttk.Label(bar, text="Stan drukarki i pochłaniacza", font=("Segoe UI", 12, "bold")).pack(side="left")
         self._button(bar, "Odśwież liczniki", self.refresh_status).pack(side="right")
-        self.readout = tk.Text(self.tab_status, font=("Consolas", 10), height=20, wrap="word", state="disabled")
-        self.readout.grid(row=1, column=0, sticky="nsew", pady=12)
+        self.level_panel = StatusLevelsPanel(self.tab_status)
+        self.level_panel.grid(row=1, column=0, sticky="nsew", pady=12)
         actions = ttk.Frame(self.tab_status)
         actions.grid(row=2, column=0, sticky="ew")
         self._button(actions, "Reset licznika pampersa (EEPROM)", self.reset_waste).pack(side="left")
@@ -207,10 +207,7 @@ class EzResetApp(ttk.Frame):
                   wraplength=710).grid(row=4, column=0, sticky="w", pady=18)
 
     def _write_readout(self, lines):
-        self.readout.configure(state="normal")
-        self.readout.delete("1.0", "end")
-        self.readout.insert("end", "\n".join(lines))
-        self.readout.configure(state="disabled")
+        self.level_panel.show_message(lines)
 
     def _set_busy(self, is_busy: bool):
         self._busy = is_busy
@@ -244,9 +241,9 @@ class EzResetApp(ttk.Frame):
         self._set_busy(False)
         try:
             result = fut.result()
+            self.status_text.set(label + " — gotowe.")
             if success is not None:
                 success(result)
-            self.status_text.set(label + " — gotowe.")
         except Exception as err:
             logger.exception("%s", label)
             self.status_text.set("Błąd: " + str(err)[:130])
@@ -358,15 +355,9 @@ class EzResetApp(ttk.Frame):
             self.settings["usb_path"] = path
             save_settings(self.settings)
             self.refresh_queues()
-            if known:
-                self.tabs.select(self.tab_status)
-                self.refresh_status()
-            else:
-                self._write_readout(["Urządzenie USB wykryto poprawnie.",
-                                     "Brak profilu EEPROM dla MDL: " + ident.get("MDL", "(nieznany)"),
-                                     "RESET WYŁĄCZONY – wymagane zweryfikowane dane serwisowe."]
-                                     + (["Model wymieniony w katalogu WIC, ale brak profilu EZ-Reset."]
-                                        if candidate_info(ident.get("MDL", "")) else []))
+            # Ink levels are readable even if the model has no EEPROM reset profile.
+            self.tabs.select(self.tab_status)
+            self.refresh_status()
             suggested = recommend_queue(self.queues, ident.get("MDL", ""))
             if suggested is not None and not self.settings.get("queue_name"):
                 self.queue_picker.current(suggested)
@@ -385,23 +376,29 @@ class EzResetApp(ttk.Frame):
             return
 
         def operation():
-            return self.printer.get_status(), self.printer.get_waste() if self.device.counters else []
+            state, waste, state_error, waste_error = None, [], "", ""
+            try:
+                state = self.printer.get_status()
+            except Exception as exc:
+                logger.warning("Odczyt poziomów tuszu nieudany: %s", exc)
+                state_error = str(exc)
+            if self.device and self.device.counters and self.device.model:
+                try:
+                    waste = self.printer.get_waste()
+                except Exception as exc:
+                    logger.warning("Odczyt pochłaniacza nieudany: %s", exc)
+                    waste_error = str(exc)
+            return state, waste, state_error, waste_error
 
         def success(data):
-            state, waste = data
-            lines = ["Drukarka: " + self.identifier.get("MDL", "?"),
-                     "Numer seryjny: " + str(getattr(state, "serial", "?")), "", "Poziomy tuszu:"]
-            levels = getattr(state, "levels", [])
-            for ink in levels:
-                lines.append(f"  {ink.color.name:<12} {ink.level}%")
-            lines.append("\nLiczniki zużytego atramentu:")
-            if not waste:
-                lines.append("  Nieznane dla wybranego modelu (brak profilu EEPROM).")
-            for idx, (count, limit) in enumerate(waste, 1):
-                percent = 100 * count / limit if limit else None
-                lines.append(f"  Licznik {idx}: {count} / {limit}" +
-                             (f"  ({percent:.1f}%)" if percent is not None else "  (nieznany limit)"))
-            self._write_readout(lines)
+            state, waste, state_error, waste_error = data
+            self.level_panel.show_levels(
+                self.identifier.get("MDL", "?"), state, waste,
+                status_error=state_error, waste_error=waste_error,
+                profile_available=bool(self.device and self.device.model),
+            )
+            if state_error and waste_error:
+                self.status_text.set("Nie udało się odczytać stanu ani liczników; sprawdź połączenie.")
         self._submit("Odczyt stanu drukarki", operation, success)
 
     def reset_waste(self):
@@ -438,6 +435,7 @@ class EzResetApp(ttk.Frame):
         def success(path):
             messagebox.showinfo("Reset zakończony", "Potwierdzono zapisy EEPROM. "
                                 "Wyłącz i włącz drukarkę.\nKopia danych: " + str(path), parent=self.root)
+            self.refresh_status()
         self._submit("Reset i weryfikacja EEPROM", operation, success)
 
     def clean_head(self):
