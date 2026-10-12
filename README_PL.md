@@ -8,6 +8,7 @@
 - Graficzne paski poziomów tuszu (BK/C/M/Y i dodatkowe kolory) oraz poziomu zapełnienia pochłaniacza w zakładce „Liczniki”.
 - Poziom „pampersa” liczony z EEPROM; progi kolorów: zielony <70%, żółty 70–89,9%, czerwony od 90%. W przypadku wielu liczników każdy ma osobny wskaźnik.
 - Poziomy tuszu odczytywane niezależnie od dostępności profilu EEPROM. Nieobsługiwane lub nieznane wartości pokazują „Brak danych”, a nie 0%.
+- **Epson L3150 (EcoTank):** jeśli odczyt stanu drukarki się powiedzie, lecz poziomy tuszów nie są udostępniane, GUI wyświetla osobne kolorowe oznaczenia BK/C/M/Y z komunikatem „Sprawdź w zbiorniku”, bez sztucznych procentów. Gdy dany kolor ma wiarygodny odczyt 0–100%, wartość pozostaje widoczna. Błędy komunikacji nadal są wyświetlane jako błędy, nie jako zachęta do kontroli zbiorników.
 - Odczyty wizualne odświeżają się po podłączeniu USB, ręcznym odświeżeniu i po resecie EEPROM (ostateczna wartość może wymagać restartu drukarki).
 - Reset: backup **zmienianych bajtów** EEPROM, odczyt i weryfikacja zapisu każdego bajtu, przerwanie przy błędzie.
 - Przyciski standardowego czyszczenia USB (korzysta z istniejącej funkcji `Printer.clean(0)`, komenda fabryczna 0x84; jej obsługa przez konkretną drukarkę **nie jest potwierdzona**).
