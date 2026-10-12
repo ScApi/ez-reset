@@ -5,12 +5,19 @@
 - Interfejs po polsku: zakładki Połączenie USB, Liczniki, Konserwacja, Wydruki testowe.
 - Lista rzeczywistych interfejsów USBPRINT z przyciskiem odświeżenia, wyborem, podwójnym kliknięciem i zapamiętywaniem wybranej ścieżki.
 - Asynchroniczna komunikacja USB (pasek aktywności i komunikaty błędów; GUI nie powinno blokować się w trakcie poleceń).
-- Odczyt poziomów tuszu oraz licznika pochłaniacza, tylko dla modeli z profilem EEPROM.
+- Graficzne paski poziomów tuszu (BK/C/M/Y i dodatkowe kolory) oraz poziomu zapełnienia pochłaniacza w zakładce „Liczniki”.
+- Poziom „pampersa” liczony z EEPROM; progi kolorów: zielony <70%, żółty 70–89,9%, czerwony od 90%. W przypadku wielu liczników każdy ma osobny wskaźnik.
+- Poziomy tuszu odczytywane niezależnie od dostępności profilu EEPROM. Nieobsługiwane lub nieznane wartości pokazują „Brak danych”, a nie 0%.
+- Odczyty wizualne odświeżają się po podłączeniu USB, ręcznym odświeżeniu i po resecie EEPROM (ostateczna wartość może wymagać restartu drukarki).
 - Reset: backup **zmienianych bajtów** EEPROM, odczyt i weryfikacja zapisu każdego bajtu, przerwanie przy błędzie.
 - Przyciski standardowego czyszczenia USB (korzysta z istniejącej funkcji `Printer.clean(0)`, komenda fabryczna 0x84; jej obsługa przez konkretną drukarkę **nie jest potwierdzona**).
 - Test dysz: **dwie metody** — preferencje sterownika Epson (użytkownik uruchamia test) oraz eksperymentalne bezpośrednie wysłanie ESC/P2 Remote Mode `NC` jako zadanie RAW (wyłącznie drukarki/sterowniki obsługujące ten protokół, bez gwarancji wydruku).
 - Wydruk testowy czarno-biały i kolorowy przez sterownik Windows (GDI), bez arbitralnego przejmowania domyślnej drukarki.
 - Weryfikacyjny katalog 12 brakujących nazw WIC (bez danych serwisowych i bez możliwości wykonania resetu na ich podstawie).
+
+### Interpretacja wskaźników
+
+Wartość procentowa pochłaniacza jest szacunkiem zużycia według licznika drukarki, nie pomiarem ilości atramentu w gąbce. Poziomy tuszu są wartościami deklarowanymi przez elektronikę urządzenia; w drukarkach EcoTank mogą nie odpowiadać faktycznemu poziomowi płynu w zbiornikach. Brak licznika albo nieważna wartość (np. -1, 105, 110) nie oznacza 0%.
 
 ## Ograniczenia
 
