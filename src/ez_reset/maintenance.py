@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 
 
 def normalize_model(label: str) -> str:
@@ -63,11 +65,49 @@ def open_printer_preferences(queue_name: str) -> None:
     subprocess.Popen(["rundll32.exe", "printui.dll,PrintUIEntry", "/e", "/n", queue_name])
 
 
-def print_test_page(queue_name: str, *, color: bool) -> None:
-    """Send a normal GDI Windows print job, not a low-level ESC/P service command.
+def fit_logo_size(image_size: tuple[int, int], max_size: tuple[int, int]) -> tuple[int, int]:
+    """Fit a logo inside a bounding box without distorting or enlarging it."""
+    image_width, image_height = image_size
+    max_width, max_height = max_size
+    if min(image_width, image_height, max_width, max_height) <= 0:
+        raise ValueError("Nieprawidłowy rozmiar logo.")
+    scale = min(max_width / image_width, max_height / image_height, 1.0)
+    return max(1, round(image_width * scale)), max(1, round(image_height * scale))
 
-    StartDoc -> StartPage -> drawings -> EndPage -> EndDoc; output is A4-ish and
-    automatically scaled to the printable area. Printer driver controls output.
+
+def _prepare_logo(logo_path: str | None, max_size: tuple[int, int]):
+    """Load PNG/JPEG/BMP and prepare a white-backed, aspect-safe Windows DIB."""
+    if not logo_path:
+        return None
+    path = Path(logo_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Nie znaleziono pliku logo: {path}")
+    try:
+        from PIL import Image, ImageWin
+
+        with Image.open(path) as source:
+            rgba = source.convert("RGBA")
+        background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        image = Image.alpha_composite(background, rgba).convert("RGB")
+        size = fit_logo_size(image.size, max_size)
+        if image.size != size:
+            image = image.resize(size, Image.Resampling.LANCZOS)
+        return ImageWin.Dib(image), size
+    except Exception as exc:
+        raise ValueError(f"Nie można wczytać logo '{path}'. Użyj poprawnego pliku PNG, JPG lub BMP. {exc}") from exc
+
+
+def print_test_page(
+    queue_name: str,
+    *,
+    color: bool,
+    model_name: str = "",
+    logo_path: str | None = None,
+) -> None:
+    """Print a branded print-quality report using the selected Windows GDI queue.
+
+    The optional logo is embedded in the report header. This is a normal Windows
+    print job, not a nozzle check or calibration operation.
     """
     if not queue_name:
         raise ValueError("Wybierz kolejkę drukarki Windows.")
@@ -93,17 +133,35 @@ def print_test_page(queue_name: str, *, color: bool) -> None:
         margin = int(min(width, height) * 0.075)
         left, right = margin, width - margin
         top = margin
-        dc.StartDoc("EZ-Reset - test kolorowy" if color else "EZ-Reset - test czarno-biały")
+        logo_limit = (max(1, int((right - left) * 0.18)), max(1, int(height * 0.08)))
+        prepared_logo = _prepare_logo(logo_path, logo_limit)
+
+        dc.StartDoc("EZ-Reset - Raport jakosci wydruku")
         try:
             dc.StartPage()
-            dc.TextOut(left, top, "EZ-Reset  |  Test drukowania")
-            dc.TextOut(left, top + int(height * 0.035),
-                       "KOLOR / CMYK + RGB" if color else "CZARNO-BIALY / SKALA SZAROSCI")
-            y = top + int(height * 0.10)
+            title_x = left
+            if prepared_logo:
+                logo, (logo_width, logo_height) = prepared_logo
+                logo.draw(dc.GetHandleOutput(), (left, top, left + logo_width, top + logo_height))
+                title_x = left + logo_width + max(12, int(height * 0.012))
+
+            dc.TextOut(title_x, top, "RAPORT JAKOŚCI WYDRUKU")
+            dc.TextOut(title_x, top + int(height * 0.035),
+                       "Drukarka: " + (model_name.strip()[:90] if model_name.strip() else "Nie wykryto modelu"))
+            dc.TextOut(title_x, top + int(height * 0.060),
+                       "Data: " + datetime.now().strftime("%d.%m.%Y  %H:%M"))
+            dc.TextOut(left, top + int(height * 0.095),
+                       "Rodzaj testu: " + ("KOLOROWY" if color else "CZARNO-BIAŁY"))
+            dc.TextOut(left, top + int(height * 0.125), "-" * 72)
+            dc.TextOut(left, top + int(height * 0.145),
+                       "WZORZEC KONTROLNY — " + ("CMYK / RGB" if color else "SKALA SZAROŚCI"))
+
+            y = top + int(height * 0.18)
             size = max(18, int((right - left) / 8))
             # win32api RGB = 0x00BBGGRR
             def rgb(r, g, b):
                 return r | (g << 8) | (b << 16)
+
             shades = [(v, v, v) for v in range(0, 256, 32)]
             swatches = ([(0, 0, 0), (0, 255, 255), (255, 0, 255),
                          (255, 255, 0), (255, 0, 0), (0, 255, 0),
@@ -119,7 +177,8 @@ def print_test_page(queue_name: str, *, color: bool) -> None:
                 for row, (r, g, b) in enumerate(((0, 255, 255), (255, 0, 255), (255, 255, 0), (0, 0, 0))):
                     yy = int(height * 0.72) + row * int(height * 0.046)
                     dc.FillSolidRect((left, yy, right, yy + int(height * 0.032)), rgb(r, g, b))
-            dc.TextOut(left, height - margin * 2, "Test kolejki: " + queue_name[:70])
+            dc.TextOut(left, height - margin * 2,
+                       "EZ-Reset  |  Kolejka: " + queue_name[:55] + "  |  Raport jakości wydruku")
             dc.EndPage()
         finally:
             dc.EndDoc()
