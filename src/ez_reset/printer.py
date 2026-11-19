@@ -1,8 +1,10 @@
+import hashlib
+import struct
 from collections.abc import Iterable
 
 from .control import ControlBackend
 from .devices import Device
-from .status import Status
+from .status import MaintenanceBoxState, Status
 
 
 class Printer:
@@ -82,6 +84,41 @@ class Printer:
 
     def get_serial(self) -> str:
         return (self.get_status()).serial
+
+    def temporary_reset_waste(self) -> bool:
+        """Temporarily bypass a full Maintenance Box without writing EEPROM.
+
+        The Epson rw service command is volatile and is cleared by a printer
+        restart. It is sent only when a fresh status explicitly reports a full
+        Maintenance Box and provides a usable serial number.
+        """
+        status = self.get_status()
+        if not any(
+            item.state is MaintenanceBoxState.FULL
+            for item in status.maintenance_box_info
+        ):
+            msg = (
+                "The printer does not report a full Maintenance Box; "
+                "the temporary waste reset was not sent."
+            )
+            raise ValueError(msg)
+
+        serial = status.serial.strip()
+        if not serial or "?" in serial or "\ufffd" in serial:
+            msg = "The printer did not provide a usable serial number for the temporary reset."
+            raise ValueError(msg)
+
+        try:
+            serial_bytes = serial.encode("ascii")
+        except UnicodeEncodeError as exc:
+            msg = "The printer serial number contains unsupported characters."
+            raise ValueError(msg) from exc
+
+        # Epson's documented rw frame: mode 1 (little-endian) + SHA-1(serial).
+        # Protocol reference: Ircama/epson_print_conf (temporary waste reset).
+        payload = struct.pack("<H", 1) + hashlib.sha1(serial_bytes).digest()
+        response = self.send_command(b"rw", payload)
+        return b"rw:" in response and b":OK;" in response
 
     def get_waste(self) -> list[tuple[int, int]]:
         return [
