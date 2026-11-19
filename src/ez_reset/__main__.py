@@ -7,7 +7,7 @@ import re
 import tkinter as tk
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from ez_reset.d4 import D4ControlBackend
 from ez_reset.devices import Device, by_model
@@ -70,6 +70,7 @@ class EzResetApp(ttk.Frame):
         self.status_text = tk.StringVar(value="Gotowy. Wybierz drukarkę USB.")
         self.model_text = tk.StringVar(value="Brak połączenia")
         self.queue_text = tk.StringVar()
+        self.logo_path_text = tk.StringVar(value=self.settings.get("logo_path", ""))
         self.buttons: list[ttk.Button] = []
 
         master.title("EZ-Reset — Serwis drukarek Epson")
@@ -197,14 +198,58 @@ class EzResetApp(ttk.Frame):
         self._button(bar, "⟳  Odśwież", self.refresh_queues).grid(row=0, column=1, padx=(8, 0))
         ttk.Label(self.tab_print,
                   text="Wybór kolejki jest niezależny od portu USBPRINT. Potwierdź, że odpowiada tej samej drukarce.",
-                  wraplength=710, foreground="#8a5220").grid(row=2, column=0, sticky="w", pady=(5, 22))
+                  wraplength=710, foreground="#8a5220").grid(row=2, column=0, sticky="w", pady=(5, 14))
+
+        logo_box = ttk.LabelFrame(self.tab_print, text="Logo w nagłówku raportu (opcjonalne)", padding=10)
+        logo_box.grid(row=3, column=0, sticky="ew", pady=(0, 14))
+        logo_box.columnconfigure(0, weight=1)
+        ttk.Entry(logo_box, textvariable=self.logo_path_text, state="readonly").grid(
+            row=0, column=0, sticky="ew", padx=(0, 8))
+        self._button(logo_box, "Wybierz logo…", self.choose_print_logo).grid(row=0, column=1, padx=(0, 6))
+        self._button(logo_box, "Usuń logo", self.remove_print_logo).grid(row=0, column=2)
+        ttk.Label(logo_box, text="Obsługiwane formaty: PNG, JPG/JPEG i BMP. Logo zostanie dopasowane proporcjonalnie.",
+                  foreground="#666666").grid(row=1, column=0, columnspan=3, sticky="w", pady=(7, 0))
+
         row = ttk.Frame(self.tab_print)
-        row.grid(row=3, column=0, sticky="w")
-        self._button(row, "Drukuj test CZARNO-BIAŁY", lambda: self.do_test_print(False)).pack(side="left")
-        self._button(row, "Drukuj test KOLOROWY", lambda: self.do_test_print(True)).pack(side="left", padx=12)
+        row.grid(row=4, column=0, sticky="w")
+        self._button(row, "Drukuj raport CZARNO-BIAŁY", lambda: self.do_test_print(False)).pack(side="left")
+        self._button(row, "Drukuj raport KOLOROWY", lambda: self.do_test_print(True)).pack(side="left", padx=12)
         ttk.Label(self.tab_print,
-                  text="Testy używają zwykłego sterownika Windows (GDI). Nie są testem dysz ani kalibracją drukarki.",
-                  wraplength=710).grid(row=4, column=0, sticky="w", pady=18)
+                  text="Wydruk zawiera tytuł RAPORT JAKOŚCI WYDRUKU, model drukarki, datę, wybrany wzorzec i nazwę kolejki. "
+                       "To test sterownika GDI, nie test dysz ani kalibracja drukarki.",
+                  wraplength=710).grid(row=5, column=0, sticky="w", pady=18)
+
+    def choose_print_logo(self):
+        path = filedialog.askopenfilename(
+            parent=self.root,
+            title="Wybierz logo do nagłówka raportu",
+            filetypes=[
+                ("Pliki graficzne", "*.png *.jpg *.jpeg *.bmp"),
+                ("PNG", "*.png"),
+                ("JPEG", "*.jpg *.jpeg"),
+                ("Bitmapa BMP", "*.bmp"),
+            ],
+        )
+        if not path:
+            return
+        try:
+            from PIL import Image
+            with Image.open(path) as image:
+                image.verify()
+        except Exception as err:
+            messagebox.showerror("Logo raportu", f"Nie można odczytać wybranego obrazu.\n\n{err}",
+                                 parent=self.root)
+            return
+        self.settings["logo_path"] = path
+        self.logo_path_text.set(path)
+        save_settings(self.settings)
+        self.status_text.set("Logo raportu zostało zapisane.")
+
+    def remove_print_logo(self):
+        self.settings.pop("logo_path", None)
+        self.logo_path_text.set("")
+        save_settings(self.settings)
+        self.status_text.set("Logo usunięte z nagłówka raportu.")
 
     def _write_readout(self, lines):
         self.level_panel.show_message(lines)
@@ -505,19 +550,32 @@ class EzResetApp(ttk.Frame):
         except ValueError as err:
             messagebox.showwarning("Wydruk", str(err), parent=self.root)
             return
-        if not messagebox.askyesno("Wydruk testowy", f"Wydrukować test "
-                                   f"{'kolorowy' if color else 'czarno-biały'} na:\n{queue_name}?",
+        logo_path = self.logo_path_text.get().strip() or None
+        if logo_path and not Path(logo_path).is_file():
+            messagebox.showerror("Logo raportu",
+                                 "Zapisany plik logo nie istnieje. Wybierz go ponownie albo usuń logo.",
+                                 parent=self.root)
+            return
+        model_name = (self.identifier.get("MDL") or self.identifier.get("DES") or
+                      "Nie wykryto modelu (drukowanie z kolejki Windows)")
+        report_type = "kolorowy" if color else "czarno-biały"
+        logo_note = "\nLogo: " + (Path(logo_path).name if logo_path else "brak") 
+        if not messagebox.askyesno("Raport jakości wydruku",
+                                   f"Wydrukować raport {report_type} na:\n{queue_name}"
+                                   f"\nModel: {model_name}{logo_note}?",
                                    parent=self.root):
             return
         if self.printer:
             # Release USBPRINT before Windows spooler tries to print on the device.
             def action():
                 self._disconnect_worker()
-                print_test_page(queue_name, color=color)
-            self._submit("Wydruk testowy (USB odłączone)", action, lambda _:
+                print_test_page(queue_name, color=color, model_name=model_name, logo_path=logo_path)
+            self._submit("Raport jakości wydruku (USB odłączone)", action, lambda _:
                          self.model_text.set("USB rozłączono na czas wydruku. Połącz ponownie."))
         else:
-            self._submit("Wydruk testowy", lambda: print_test_page(queue_name, color=color))
+            self._submit("Raport jakości wydruku",
+                         lambda: print_test_page(queue_name, color=color,
+                                                 model_name=model_name, logo_path=logo_path))
 
     def close(self):
         if self._closing:
