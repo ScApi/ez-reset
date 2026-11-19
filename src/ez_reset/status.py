@@ -91,6 +91,23 @@ class ConsumableStatus(Enum):
     UNKNOWN = 4
 
 
+class MaintenanceBoxState(Enum):
+    NOT_FULL = 0
+    NEAR_FULL = 1
+    FULL = 2
+    UNKNOWN = -1
+
+    @classmethod
+    def _missing_(cls, _key: int) -> Self:
+        return cls.UNKNOWN
+
+
+@dataclass(frozen=True)
+class MaintenanceBoxInfo:
+    state: MaintenanceBoxState
+    reset_count: int | None = None
+
+
 @dataclass(frozen=True)
 class ConsumableLevel:
     level: int
@@ -160,6 +177,7 @@ class Status:
     maintenance_box: ConsumableLevel
     serial: str
     other: dict[int, bytes]
+    maintenance_box_info: tuple[MaintenanceBoxInfo, ...] = ()
 
     @classmethod
     def from_bytes(cls, data: bytes) -> Status:
@@ -170,6 +188,7 @@ class Status:
         maintenance_box = ConsumableLevel(-1, ConsumableStatus.UNKNOWN)
         serial = ""
         other: dict[int, bytes] = {}
+        maintenance_box_info: list[MaintenanceBoxInfo] = []
 
         for header, _parameter_length, parameter_data in parse_status_struct(data):
             # Status entry
@@ -188,6 +207,31 @@ class Status:
             elif header == 0x0D:
                 maintenance_box = ConsumableLevel.from_int(parameter_data[0])
 
+            # Maintenance Box state and temporary-reset counter.
+            elif header == 0x37:
+                if parameter_data:
+                    entry_size = parameter_data[0]
+                    valid_entries = (
+                        entry_size in (1, 2)
+                        and len(parameter_data) > 1
+                        and (len(parameter_data) - 1) % entry_size == 0
+                    )
+                    if valid_entries:
+                        for index in range(1, len(parameter_data), entry_size):
+                            state_value = parameter_data[index]
+                            reset_count = (
+                                parameter_data[index + 1] if entry_size == 2 else None
+                            )
+                            maintenance_box_info.append(
+                                MaintenanceBoxInfo(
+                                    MaintenanceBoxState(state_value), reset_count
+                                )
+                            )
+                    else:
+                        other[header] = parameter_data
+                else:
+                    other[header] = parameter_data
+
             # Ink entry
             elif header == 0x0F:
                 entry_size = parameter_data[0]
@@ -198,12 +242,15 @@ class Status:
                 ]
 
             elif header == 0x40:
-                serial = str(parameter_data)
+                serial = parameter_data.decode("ascii", errors="replace").strip("\x00\r\n ")
 
             else:
                 other[header] = parameter_data
 
-        return Status(status, error, source, levels, maintenance_box, serial, other)
+        return Status(
+            status, error, source, levels, maintenance_box, serial, other,
+            tuple(maintenance_box_info),
+        )
 
     def __rich_repr__(self) -> Iterable[Any | tuple[Any] | tuple[str, Any] | tuple[str, Any, Any]]:
         yield "state", self.state
@@ -216,3 +263,4 @@ class Status:
             ConsumableLevel(level=-1, status=ConsumableStatus.UNKNOWN),
         )
         yield "serial", self.serial
+        yield "maintenance_box_info", self.maintenance_box_info
