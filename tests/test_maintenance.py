@@ -133,7 +133,7 @@ class ReportLogoTests(unittest.TestCase):
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp:
                 temp_path = temp.name
             print_test_page('EPSON Test', color=False, model_name='L3150', logo_path=temp_path)
-            self.assertEqual(calls, [('logo', (120, 120, 292, 206))])
+            self.assertEqual(calls, [('logo', (90, 90, 273, 182))])
         finally:
             if temp_path:
                 from pathlib import Path
