@@ -17,6 +17,7 @@ from ez_reset.maintenance import (
     print_raw_nozzle_check, recommend_queue,
 )
 from ez_reset.printer import Printer
+from ez_reset.status import MaintenanceBoxState
 from ez_reset.utils import parse_identifier
 from ez_reset.win_usbprint import USBPRINTTransport, enumerate_printers
 
@@ -71,6 +72,9 @@ class EzResetApp(ttk.Frame):
         self.model_text = tk.StringVar(value="Brak połączenia")
         self.queue_text = tk.StringVar()
         self.logo_path_text = tk.StringVar(value=self.settings.get("logo_path", ""))
+        self.temp_reset_state_text = tk.StringVar(
+            value="Połącz drukarkę i odczytaj stan, aby sprawdzić dostępność."
+        )
         self.buttons: list[ttk.Button] = []
 
         master.title("EZ-Reset — Serwis drukarek Epson")
@@ -171,20 +175,41 @@ class EzResetApp(ttk.Frame):
                        "W oknie sterownika Epson wybierz zakładkę Konserwacja → Test dysz. "
                        "Obsługa zależy od zainstalowanego sterownika.").grid(row=1, column=0, sticky="w")
         row = ttk.Frame(self.tab_maintenance)
-        row.grid(row=2, column=0, sticky="w", pady=(12, 22))
+        row.grid(row=2, column=0, sticky="w", pady=(12, 16))
         self._button(row, "Test dysz (sterownik Epson)",
                      self.open_nozzle_utility).pack(side="left")
         self._button(row, "Test dysz bezpośredni (ESC/P2, eksperymentalny)",
                      self.direct_nozzle_check).pack(side="left", padx=(12, 0))
-        ttk.Separator(self.tab_maintenance).grid(row=3, column=0, sticky="ew")
+
+        temporary_box = ttk.LabelFrame(
+            self.tab_maintenance, text="Tymczasowe odblokowanie licznika pochłaniacza", padding=10
+        )
+        temporary_box.grid(row=3, column=0, sticky="ew", pady=(0, 14))
+        temporary_box.columnconfigure(0, weight=1)
+        ttk.Label(
+            temporary_box, textvariable=self.temp_reset_state_text,
+            wraplength=680, justify="left"
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+        self._button(
+            temporary_box, "Tymczasowo odblokuj drukowanie (Epson rw)",
+            self.temporary_reset_waste
+        ).grid(row=1, column=0, sticky="w")
+        ttk.Label(
+            temporary_box,
+            text="Nie zapisuje EEPROM i znika po ponownym uruchomieniu drukarki. "
+                 "Używaj wyłącznie do krótkiej diagnostyki; pełny fizycznie pochłaniacz może spowodować wyciek atramentu.",
+            foreground="#8a5220", wraplength=680, justify="left"
+        ).grid(row=2, column=0, sticky="w", pady=(8, 0))
+
+        ttk.Separator(self.tab_maintenance).grid(row=4, column=0, sticky="ew")
         ttk.Label(self.tab_maintenance,
                   text="Standardowe czyszczenie: wysyła istniejącą komendę serwisową USB (0x84, poziom 0). "
                        "Nie wszystkie modele muszą ją obsługiwać.",
-                  wraplength=700, justify="left").grid(row=4, column=0, sticky="w", pady=(14, 8))
+                  wraplength=700, justify="left").grid(row=5, column=0, sticky="w", pady=(14, 8))
         self._button(self.tab_maintenance, "Wykonaj standardowe czyszczenie USB",
-                     self.clean_head).grid(row=5, column=0, sticky="w", pady=6)
+                     self.clean_head).grid(row=6, column=0, sticky="w", pady=6)
         ttk.Label(self.tab_maintenance, text="Brak funkcji głębokiego/power cleaning: to wymaga potwierdzenia dla modelu.",
-                  foreground="#8a5220").grid(row=6, column=0, sticky="w", pady=(16, 0))
+                  foreground="#8a5220").grid(row=7, column=0, sticky="w", pady=(12, 0))
 
     def _build_print(self):
         self.tab_print.columnconfigure(0, weight=1)
@@ -412,6 +437,7 @@ class EzResetApp(ttk.Frame):
     def disconnect(self):
         def success(_):
             self.model_text.set("Rozłączono")
+            self.temp_reset_state_text.set("Brak połączenia z drukarką.")
             self._write_readout(["Brak połączenia z drukarką."])
         self._submit("Rozłączanie USB", self._disconnect_worker, success)
 
@@ -437,6 +463,7 @@ class EzResetApp(ttk.Frame):
 
         def success(data):
             state, waste, state_error, waste_error = data
+            self.temp_reset_state_text.set(self._maintenance_box_summary(state, state_error))
             self.level_panel.show_levels(
                 self.identifier.get("MDL", "?"), state, waste,
                 status_error=state_error, waste_error=waste_error,
@@ -445,6 +472,58 @@ class EzResetApp(ttk.Frame):
             if state_error and waste_error:
                 self.status_text.set("Nie udało się odczytać stanu ani liczników; sprawdź połączenie.")
         self._submit("Odczyt stanu drukarki", operation, success)
+
+    @staticmethod
+    def _maintenance_box_summary(state, error=""):
+        if error or state is None:
+            return "Stan Maintenance Box: nie udało się odczytać informacji z drukarki."
+        boxes = getattr(state, "maintenance_box_info", ())
+        if not boxes:
+            return "Drukarka nie udostępnia informacji o stanie Maintenance Box; tymczasowe odblokowanie jest niedostępne."
+        if any(item.state is MaintenanceBoxState.FULL for item in boxes):
+            return "Maintenance Box: PEŁNY — można wykonać krótką próbę tymczasowego odblokowania."
+        if any(item.state is MaintenanceBoxState.NEAR_FULL for item in boxes):
+            return "Maintenance Box: blisko pełnego, ale nie zgłasza jeszcze stanu pełnego."
+        if all(item.state is MaintenanceBoxState.NOT_FULL for item in boxes):
+            return "Maintenance Box: niepełny — tymczasowe odblokowanie nie jest obecnie potrzebne."
+        return "Stan Maintenance Box jest niejednoznaczny; tymczasowe odblokowanie nie jest dostępne."
+
+    def temporary_reset_waste(self):
+        if not self.printer:
+            messagebox.showwarning("Tymczasowe odblokowanie", "Najpierw połącz drukarkę przez USB.",
+                                   parent=self.root)
+            return
+        warning = (
+            "Wysłać do drukarki komendę Epson rw?\n\n"
+            "• Działa tylko wtedy, gdy świeży status zgłasza pełny Maintenance Box i dostępny jest numer seryjny.\n"
+            "• Nie zeruje liczników EEPROM; tymczasowe odblokowanie znika po restarcie drukarki.\n"
+            "• Każde przejście ze stanu pełnego do niepełnego zwiększa licznik wymiany/czyszczenia pochłaniacza.\n\n"
+            "Użyj tej funkcji wyłącznie do krótkiego testu dysz lub jakości wydruku. "
+            "Jeśli pochłaniacz jest fizycznie pełny, atrament może wyciec z drukarki.\n\n"
+            "Kontynuować?"
+        )
+        if not messagebox.askyesno("Tymczasowe odblokowanie", warning, parent=self.root):
+            return
+
+        def operation():
+            if not self.printer:
+                raise RuntimeError("Drukarka została rozłączona.")
+            if not self.printer.temporary_reset_waste():
+                raise RuntimeError("Drukarka nie potwierdziła tymczasowego odblokowania (brak odpowiedzi rw:...:OK;).")
+            return True
+
+        def success(_result):
+            self.temp_reset_state_text.set(
+                "Drukarka potwierdziła tymczasowe odblokowanie. Wykonaj teraz test; stan wróci po restarcie."
+            )
+            messagebox.showinfo(
+                "Tymczasowe odblokowanie",
+                "Drukarka potwierdziła wykonanie komendy rw. Możesz teraz wykonać krótki test dysz lub jakości wydruku. "
+                "Nie wykonano resetu EEPROM. Po ponownym uruchomieniu drukarki blokada może wrócić.",
+                parent=self.root,
+            )
+
+        self._submit("Tymczasowe odblokowanie drukowania", operation, success)
 
     def reset_waste(self):
         if not self.printer or not self.device or not self.device.reset or not self.device.model:
