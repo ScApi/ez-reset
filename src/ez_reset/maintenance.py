@@ -171,12 +171,12 @@ def print_test_page(
                 x1 = left + (i + 1) * (right - left) // 8
                 dc.FillSolidRect((x0, y, x1, y + size), rgb(r, g, b))
             for i in range(13):
-                yy = y + size + int(height * (0.045 + i * 0.032))
+                yy = y + size + int(height * (0.035 + i * 0.026))
                 dc.TextOut(left, yy, f"{i + 1:02d}  ABCDEFGHIJKLMNOPQRSTUVWXYZ  1234567890")
             if color:
                 for row, (r, g, b) in enumerate(((0, 255, 255), (255, 0, 255), (255, 255, 0), (0, 0, 0))):
-                    yy = int(height * 0.72) + row * int(height * 0.046)
-                    dc.FillSolidRect((left, yy, right, yy + int(height * 0.032)), rgb(r, g, b))
+                    yy = int(height * 0.72) + row * int(height * 0.040)
+                    dc.FillSolidRect((left, yy, right, yy + int(height * 0.026)), rgb(r, g, b))
             dc.TextOut(left, height - margin * 2,
                        "EZ-Reset  |  Kolejka: " + queue_name[:55] + "  |  Raport jakości wydruku")
             dc.EndPage()
