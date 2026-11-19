@@ -14,6 +14,7 @@
 - Przyciski standardowego czyszczenia USB (korzysta z istniejącej funkcji `Printer.clean(0)`, komenda fabryczna 0x84; jej obsługa przez konkretną drukarkę **nie jest potwierdzona**).
 - Test dysz: **dwie metody** — preferencje sterownika Epson (użytkownik uruchamia test) oraz eksperymentalne bezpośrednie wysłanie ESC/P2 Remote Mode `NC` jako zadanie RAW (wyłącznie drukarki/sterowniki obsługujące ten protokół, bez gwarancji wydruku).
 - Wydruk testowy czarno-biały i kolorowy przez sterownik Windows (GDI), bez arbitralnego przejmowania domyślnej drukarki.
+- Wydruki są oznaczone jako **„RAPORT JAKOŚCI WYDRUKU”** i zawierają model drukarki, datę, rodzaj wzorca oraz nazwę kolejki. Można opcjonalnie wskazać logo firmy (PNG/JPG/BMP); ścieżka jest zapamiętywana w ustawieniach, a grafika jest proporcjonalnie dopasowywana do nagłówka.
 - Weryfikacyjny katalog 12 brakujących nazw WIC (bez danych serwisowych i bez możliwości wykonania resetu na ich podstawie).
 
 ### Interpretacja wskaźników
