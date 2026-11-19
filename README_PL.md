@@ -11,6 +11,7 @@
 - **Epson L3150 (EcoTank):** jeśli odczyt stanu drukarki się powiedzie, lecz poziomy tuszów nie są udostępniane, GUI wyświetla osobne kolorowe oznaczenia BK/C/M/Y z komunikatem „Sprawdź w zbiorniku”, bez sztucznych procentów. Gdy dany kolor ma wiarygodny odczyt 0–100%, wartość pozostaje widoczna. Błędy komunikacji nadal są wyświetlane jako błędy, nie jako zachęta do kontroli zbiorników.
 - Odczyty wizualne odświeżają się po podłączeniu USB, ręcznym odświeżeniu i po resecie EEPROM (ostateczna wartość może wymagać restartu drukarki).
 - Reset: backup **zmienianych bajtów** EEPROM, odczyt i weryfikacja zapisu każdego bajtu, przerwanie przy błędzie.
+- **Tymczasowe odblokowanie drukowania (Epson rw):** osobna komenda serwisowa, bez zapisu EEPROM. EZ-Reset odczytuje świeży status i wysyła ją wyłącznie wtedy, gdy drukarka zgłasza pełny Maintenance Box oraz udostępnia numer seryjny. Wymagane jest potwierdzenie rw:...:OK;. Odblokowanie znika po ponownym uruchomieniu drukarki; każde przejście z „pełny” do „niepełny” zwiększa licznik wymiany/czyszczenia pochłaniacza. Funkcja służy wyłącznie do krótkiej diagnostyki.
 - Przyciski standardowego czyszczenia USB (korzysta z istniejącej funkcji `Printer.clean(0)`, komenda fabryczna 0x84; jej obsługa przez konkretną drukarkę **nie jest potwierdzona**).
 - Test dysz: **dwie metody** — preferencje sterownika Epson (użytkownik uruchamia test) oraz eksperymentalne bezpośrednie wysłanie ESC/P2 Remote Mode `NC` jako zadanie RAW (wyłącznie drukarki/sterowniki obsługujące ten protokół, bez gwarancji wydruku).
 - Wydruk testowy czarno-biały i kolorowy przez sterownik Windows (GDI), bez arbitralnego przejmowania domyślnej drukarki.
@@ -27,7 +28,8 @@ Wartość procentowa pochłaniacza jest szacunkiem zużycia według licznika dru
 2. `USBPRINT` wybiera fizyczny interfejs; kolejka Windows służy do wydruków GDI i może nie odpowiadać temu samemu urządzeniu. Potwierdź wybór w oknie.
 3. Standardowe czyszczenie wysyła polecenie, **nie ma gwarantowanego potwierdzenia rozpoczęcia cyklu**. Bezpośredni test dysz ESC/P2 może być ignorowany przez współczesny sterownik i nie został jeszcze zweryfikowany sprzętowo. Model należy sprawdzić na urządzeniu.
 4. Bez urządzenia Epson podłączonego do Windows nie da się potwierdzić resetu, wydruków ani zachowania sterownika. Kod został przetestowany jednostkowo z atrapami API drukowania.
-5. Reset liczników tylko po fizycznym serwisie pochłaniacza. Weryfikacja EEPROM nie umożliwia automatycznego wycofania częściowego resetu.
+5. Reset liczników EEPROM tylko po fizycznym serwisie pochłaniacza. Weryfikacja EEPROM nie umożliwia automatycznego wycofania częściowego resetu.
+6. Tymczasowe odblokowanie rw nie jest trwałą naprawą ani resetem EEPROM. Działa tylko wtedy, gdy status zawiera informację o pełnym Maintenance Box i drukarka udostępnia numer seryjny; część modeli może nie udostępniać tych danych albo nie obsługiwać komendy. Fizycznie przepełniony pochłaniacz nadal może spowodować wyciek atramentu. Po przejściu do stanu „niepełny” drukarka zwiększa licznik wymiany/czyszczenia pochłaniacza.
 
 ## Wgranie na fork
 
@@ -65,6 +67,6 @@ python tools/aktualizuj_katalog_wic.py --xml src/ez_reset/devices.xml --out rapo
 - https://wicreset.jmultishop.com/support — lista starszych rodzin WIC.
 - https://www.wic.support/supported-printers-models-list/ — wykaz WIC.
 - https://resetkey.net/wic-reset-utility-supported-models-list — wykaz WIC 5.97 (2026).
-- https://github.com/Ircama/epson_print_conf — porównawcza dokumentacja konserwacji Epson.
+- https://github.com/Ircama/epson_print_conf — porównawcza dokumentacja konserwacji Epson, w tym opis tymczasowej komendy rw.
 
 **Status:** kod przeznaczony do opublikowania w gałęzi testowej forka `ScApi/ez-reset`; `master` pozostaje bez zmian.
